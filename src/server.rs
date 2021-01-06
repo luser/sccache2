@@ -732,6 +732,10 @@ where
                     Message::WithoutBody(Response::ShuttingDown(Box::new(info)))
                 }));
             }
+            Request::ClearCache => {
+                debug!("handle_client: clear_cache");
+                Box::new(self.clear_cache().map(|_| Response::ClearCacheComplete))
+            }
         };
 
         Box::new(res.map(Message::WithoutBody))
@@ -837,6 +841,10 @@ where
     /// Zero stats about the cache.
     fn zero_stats(&self) {
         *self.stats.borrow_mut() = ServerStats::default();
+    }
+
+    fn clear_cache(&self) -> SFuture<()> {
+        self.storage.clear()
     }
 
     /// Handle a compile request from a client.

@@ -122,4 +122,9 @@ impl Storage for RedisCache {
             .compat(),
         )
     }
+
+    fn clear(&self) -> SFuture<()> {
+        trace!("RedisCache::clear - NOT IMPLEMENTED");
+        f_err(anyhow!("RedisCache::clear is not implemented"))
+    }
 }
