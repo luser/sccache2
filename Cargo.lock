@@ -144,6 +144,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-native-tls"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9e9e7a929bd34c68a82d58a4de7f86fffdaf97fb2af850162a7bb19dd7269b33"
+dependencies = [
+ "async-std",
+ "native-tls",
+ "thiserror",
+ "url 2.2.0",
+]
+
+[[package]]
 name = "async-std"
 version = "1.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -477,12 +489,11 @@ version = "4.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cc4369b5e4c0cddf64ad8981c0111e7df4f7078f4d6ba98fb31f2e17c4c57b7e"
 dependencies = [
- "bytes 0.5.6",
  "bytes 1.0.0",
  "futures-util",
  "memchr",
  "pin-project-lite 0.2.1",
- "tokio 0.2.24",
+ "tokio 1.3.0",
 ]
 
 [[package]]
@@ -2210,21 +2221,23 @@ dependencies = [
 
 [[package]]
 name = "redis"
-version = "0.17.0"
+version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95357caf2640abc54651b93c98a8df4fe1ccbf44b8e601ccdf43d5c1451f29ac"
+checksum = "eeb8f8d059ead7805e171fc22de8348a3d611c0f985aaa4f5cf6c0dfc7645407"
 dependencies = [
+ "async-native-tls",
  "async-std",
  "async-trait",
- "bytes 0.5.6",
+ "bytes 1.0.0",
  "combine",
  "dtoa",
  "futures-util",
  "itoa",
+ "native-tls",
  "percent-encoding 2.1.0",
- "pin-project-lite 0.1.11",
+ "pin-project-lite 0.2.1",
  "sha1",
- "tokio 0.2.24",
+ "tokio 1.3.0",
  "tokio-util",
  "url 2.2.0",
 ]
@@ -2958,15 +2971,23 @@ dependencies = [
  "bytes 0.5.6",
  "fnv",
  "futures-core",
- "iovec",
  "lazy_static",
- "libc",
- "memchr",
  "mio",
- "mio-uds",
  "num_cpus",
  "pin-project-lite 0.1.11",
  "slab",
+]
+
+[[package]]
+name = "tokio"
+version = "1.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8d56477f6ed99e10225f38f9f75f872f29b8b8bd8c0b946f63345bb144e9eeda"
+dependencies = [
+ "autocfg 1.0.1",
+ "bytes 1.0.0",
+ "memchr",
+ "pin-project-lite 0.2.1",
 ]
 
 [[package]]
@@ -3230,16 +3251,16 @@ dependencies = [
 
 [[package]]
 name = "tokio-util"
-version = "0.3.1"
+version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be8242891f2b6cbef26a2d7e8605133c2c554cd35b3e4948ea892d6d68436499"
+checksum = "ec31e5cc6b46e653cf57762f36f71d5e6386391d88a72fd6db4508f8f676fb29"
 dependencies = [
- "bytes 0.5.6",
+ "bytes 1.0.0",
  "futures-core",
  "futures-sink",
  "log 0.4.11",
- "pin-project-lite 0.1.11",
- "tokio 0.2.24",
+ "pin-project-lite 0.2.1",
+ "tokio 1.3.0",
 ]
 
 [[package]]
