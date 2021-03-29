@@ -86,7 +86,7 @@ mod toolchain_imp {
             let mut remaining = vec![executable];
             while let Some(obj_path) = remaining.pop() {
                 assert!(obj_path.is_absolute());
-                let tar_path = tarify_path(&obj_path)?;
+                let (tar_path, dirs) = tarify_path(&obj_path)?;
                 // If file already in the set, assume we've analysed all deps
                 if self.file_set.contains_key(&tar_path) {
                     continue;
@@ -96,6 +96,9 @@ mod toolchain_imp {
                 })?;
                 remaining.extend(ldd_libraries);
                 self.file_set.insert(tar_path, obj_path);
+                for (dir_tar_path, dir) in dirs {
+                    self.dir_set.insert(dir_tar_path, dir);
+                }
             }
             Ok(())
         }
@@ -116,8 +119,11 @@ mod toolchain_imp {
             {
                 return Ok(());
             }
-            let tar_path = tarify_path(&dir_path)?;
+            let (tar_path, dirs) = tarify_path(&dir_path)?;
             self.dir_set.insert(tar_path, dir_path);
+            for (dir_tar_path, dir) in dirs {
+                self.dir_set.insert(dir_tar_path, dir);
+            }
             Ok(())
         }
 
@@ -129,8 +135,11 @@ mod toolchain_imp {
                     file_path.to_string_lossy()
                 ))
             }
-            let tar_path = tarify_path(&file_path)?;
+            let (tar_path, dirs) = tarify_path(&file_path)?;
             self.file_set.insert(tar_path, file_path);
+            for (dir_tar_path, dir) in dirs {
+                self.dir_set.insert(dir_tar_path, dir);
+            }
             Ok(())
         }
 
@@ -355,7 +364,7 @@ mod toolchain_imp {
     }
 }
 
-pub fn make_tar_header(src: &Path, dest: &str) -> io::Result<tar::Header> {
+pub fn make_tar_header(src: &Path, dest: &str, is_dir: bool) -> io::Result<tar::Header> {
     let metadata_res = fs::metadata(&src);
 
     let mut file_header = tar::Header::new_ustar();
@@ -368,7 +377,7 @@ pub fn make_tar_header(src: &Path, dest: &str) -> io::Result<tar::Header> {
             "Couldn't get metadata of file {:?}, falling back to some defaults",
             src
         );
-        file_header.set_mode(0o644);
+        file_header.set_mode(if is_dir { 0o755 } else { 0o644 });
         file_header.set_uid(0);
         file_header.set_gid(0);
         file_header.set_mtime(0);
@@ -378,7 +387,11 @@ pub fn make_tar_header(src: &Path, dest: &str) -> io::Result<tar::Header> {
         file_header
             .set_device_minor(0)
             .expect("expected a ustar header");
-        file_header.set_entry_type(tar::EntryType::file());
+        file_header.set_entry_type(if is_dir {
+            tar::EntryType::dir()
+        } else {
+            tar::EntryType::file()
+        });
     }
 
     // tar-rs imposes that `set_path` takes a relative path
@@ -396,11 +409,21 @@ pub fn make_tar_header(src: &Path, dest: &str) -> io::Result<tar::Header> {
 
 /// Simplify the path and strip the leading slash
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-fn tarify_path(path: &Path) -> Result<PathBuf> {
-    let final_path = simplify_path(path)?;
-    let mut components = final_path.components();
-    assert_eq!(components.next(), Some(Component::RootDir));
-    Ok(components.as_path().to_owned())
+fn tarify_path(path: &Path) -> Result<(PathBuf, Vec<(PathBuf, PathBuf)>)> {
+    let (final_path, dirs) = simplify_path(path)?;
+    // reportedly dirs is non-empty on openSUSE for "as"
+    let rm_root = |pathbuf: &PathBuf| {
+        let mut components = pathbuf.components();
+        assert_eq!(components.next(), Some(Component::RootDir));
+        components.as_path().to_owned()
+    };
+    Ok((
+        rm_root(&final_path),
+        dirs.iter()
+            .map(rm_root)
+            .zip(dirs.iter().cloned())
+            .collect::<Vec<_>>(),
+    ))
 }
 
 /// Simplify a path to one without any relative components, erroring if it looks
@@ -412,8 +435,9 @@ fn tarify_path(path: &Path) -> Result<PathBuf> {
 /// (usually) been added to an archive because something will try access it, but
 /// resolving symlinks (be they for the actual file or directory components) can
 /// make the accessed path 'disappear' in favour of the canonical path.
-pub fn simplify_path(path: &Path) -> Result<PathBuf> {
+pub fn simplify_path(path: &Path) -> Result<(PathBuf, Vec<PathBuf>)> {
     let mut final_path = PathBuf::new();
+    let mut dirs = vec![];
     for component in path.components() {
         match component {
             c @ Component::RootDir | c @ Component::Prefix(_) | c @ Component::Normal(_) => {
@@ -428,10 +452,11 @@ pub fn simplify_path(path: &Path) -> Result<PathBuf> {
                 if is_symlink {
                     bail!("Cannot handle symlinks in parent paths")
                 }
+                dirs.push(final_path.clone());
                 final_path.pop();
             }
             Component::CurDir => continue,
         }
     }
-    Ok(final_path)
+    Ok((final_path, dirs))
 }

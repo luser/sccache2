@@ -46,7 +46,7 @@ impl CCompilerImpl for GCC {
         arguments: &[OsString],
         cwd: &Path,
     ) -> CompilerArguments<ParsedArguments> {
-        parse_arguments(arguments, cwd, &ARGS[..], self.gplusplus)
+        parse_arguments(arguments, cwd, &ARGS[..], self.gplusplus, self.kind())
     }
 
     fn preprocess<T>(
@@ -125,6 +125,8 @@ ArgData! { pub
     // Only valid for clang, but this needs to be here since clang shares gcc's arg parsing.
     XClang(OsString),
     Arch(OsString),
+    PedanticFlag,
+    Standard(OsString),
 }
 
 use self::ArgData::*;
@@ -156,6 +158,8 @@ counted_array!(pub static ARGS: [ArgInfo<ArgData>; _] = [
     flag!("-P", TooHardFlag),
     take_arg!("-U", OsString, CanBeSeparated, PassThrough),
     take_arg!("-V", OsString, Separated, PassThrough),
+    flag!("-Werror=pedantic", PedanticFlag),
+    flag!("-Wpedantic", PedanticFlag),
     take_arg!("-Xassembler", OsString, Separated, PassThrough),
     take_arg!("-Xlinker", OsString, Separated, PassThrough),
     take_arg!("-Xpreprocessor", OsString, Separated, PreprocessorArgument),
@@ -190,8 +194,11 @@ counted_array!(pub static ARGS: [ArgInfo<ArgData>; _] = [
     flag!("-nostdinc", PreprocessorArgumentFlag),
     flag!("-nostdinc++", PreprocessorArgumentFlag),
     take_arg!("-o", PathBuf, CanBeSeparated, Output),
+    flag!("-pedantic", PedanticFlag),
+    flag!("-pedantic-errors", PedanticFlag),
     flag!("-remap", PreprocessorArgumentFlag),
     flag!("-save-temps", TooHardFlag),
+    take_arg!("-std", OsString, Concatenated('='), Standard),
     take_arg!("-stdlib", OsString, Concatenated('='), PreprocessorArgument),
     flag!("-trigraphs", PreprocessorArgumentFlag),
     take_arg!("-u", OsString, CanBeSeparated, PassThrough),
@@ -214,6 +221,7 @@ pub fn parse_arguments<S>(
     cwd: &Path,
     arg_info: S,
     plusplus: bool,
+    kind: CCompilerKind,
 ) -> CompilerArguments<ParsedArguments>
 where
     S: SearchableArgInfo<ArgData>,
@@ -228,8 +236,11 @@ where
     let mut extra_hash_files = vec![];
     let mut compilation = false;
     let mut multiple_input = false;
+    let mut pedantic_flag = false;
+    let mut language_extensions = true; // by default, GCC allows extensions
     let mut split_dwarf = false;
     let mut need_explicit_dep_target = false;
+    let mut need_explicit_dep_argument_path = None;
     let mut language = None;
     let mut compilation_flag = OsString::new();
     let mut profile_generate = false;
@@ -268,6 +279,9 @@ where
             Some(TooHardFlag) | Some(TooHard(_)) => {
                 cannot_cache!(arg.flag_str().expect("Can't be Argument::Raw/UnknownFlag",))
             }
+            Some(PedanticFlag) => pedantic_flag = true,
+            // standard values vary, but extension values all start with "gnu"
+            Some(Standard(version)) => language_extensions = version.starts_with("gnu"),
             Some(SplitDwarf) => split_dwarf = true,
             Some(DoCompilation) => {
                 compilation = true;
@@ -290,13 +304,18 @@ where
                 };
             }
             Some(Output(p)) => output_arg = Some(p.clone()),
-            Some(NeedDepTarget) => need_explicit_dep_target = true,
+            Some(NeedDepTarget) => {
+                need_explicit_dep_target = true;
+                if need_explicit_dep_argument_path.is_none() {
+                    need_explicit_dep_argument_path = Some(true);
+                }
+            }
             Some(DepTarget(s)) => {
                 dep_flag = OsString::from(arg.flag_str().expect("Dep target flag expected"));
                 dep_target = Some(s.clone());
             }
-            Some(DepArgumentPath(_))
-            | Some(ExtraHashFile(_))
+            Some(DepArgumentPath(_)) => need_explicit_dep_argument_path = Some(false),
+            Some(ExtraHashFile(_))
             | Some(PreprocessorArgumentFlag)
             | Some(PreprocessorArgument(_))
             | Some(PreprocessorArgumentPath(_))
@@ -333,6 +352,8 @@ where
         }
         let args = match arg.get_data() {
             Some(SplitDwarf)
+            | Some(PedanticFlag)
+            | Some(Standard(_))
             | Some(ProfileGenerate)
             | Some(TestCoverage)
             | Some(Coverage)
@@ -376,6 +397,8 @@ where
         let arg = try_or_cannot_cache!(arg, "argument parse");
         let args = match arg.get_data() {
             Some(SplitDwarf)
+            | Some(PedanticFlag)
+            | Some(Standard(_))
             | Some(ProfileGenerate)
             | Some(TestCoverage)
             | Some(Coverage)
@@ -467,6 +490,10 @@ where
         let dwo = output.with_extension("dwo");
         outputs.insert("dwo", dwo);
     }
+    let suppress_rewrite_includes_only = match kind {
+        CCompilerKind::GCC => language_extensions && pedantic_flag,
+        _ => false,
+    };
     if outputs_gcno {
         let gcno = output.with_extension("gcno");
         outputs.insert("gcno", gcno);
@@ -475,6 +502,10 @@ where
     if need_explicit_dep_target {
         dependency_args.push(dep_flag);
         dependency_args.push(dep_target.unwrap_or_else(|| output.clone().into_os_string()));
+    }
+    if let Some(true) = need_explicit_dep_argument_path {
+        dependency_args.push(OsString::from("-MF"));
+        dependency_args.push(Path::new(&output).with_extension("d").into_os_string());
     }
     outputs.insert("obj", output);
 
@@ -491,6 +522,7 @@ where
         msvc_show_includes: false,
         profile_generate,
         color_mode,
+        suppress_rewrite_includes_only,
     })
 }
 
@@ -526,14 +558,20 @@ where
         cmd.arg("-P");
     }
     if rewrite_includes_only {
-        match kind {
-            CCompilerKind::Clang => {
-                cmd.arg("-frewrite-includes");
+        if parsed_args.suppress_rewrite_includes_only {
+            if log_enabled!(Trace) {
+                trace!("preprocess: pedantic arguments disable rewrite_includes_only");
             }
-            CCompilerKind::GCC => {
-                cmd.arg("-fdirectives-only");
+        } else {
+            match kind {
+                CCompilerKind::Clang => {
+                    cmd.arg("-frewrite-includes");
+                }
+                CCompilerKind::GCC => {
+                    cmd.arg("-fdirectives-only");
+                }
+                _ => {}
             }
-            _ => {}
         }
     }
     cmd.arg(&parsed_args.input)
@@ -641,7 +679,7 @@ pub fn generate_compile_commands(
             //     -fdirectives-only.
             //
             // Which is exactly what we do :-)
-            if rewrite_includes_only {
+            if rewrite_includes_only && !parsed_args.suppress_rewrite_includes_only {
                 arguments.push("-fdirectives-only".into());
             }
             arguments.push("-fpreprocessed".into());
@@ -743,7 +781,7 @@ mod test {
         plusplus: bool,
     ) -> CompilerArguments<ParsedArguments> {
         let args = arguments.iter().map(OsString::from).collect::<Vec<_>>();
-        parse_arguments(&args, ".".as_ref(), &ARGS[..], plusplus)
+        parse_arguments(&args, ".".as_ref(), &ARGS[..], plusplus, CCompilerKind::GCC)
     }
 
     #[test]
@@ -1169,6 +1207,32 @@ mod test {
     }
 
     #[test]
+    fn test_parse_arguments_dep_target_and_file_needed() {
+        let args = stringvec!["-c", "foo/bar.c", "-fabc", "-o", "foo/bar.o", "-MMD"];
+        let ParsedArguments {
+            input,
+            language,
+            outputs,
+            dependency_args,
+            msvc_show_includes,
+            common_args,
+            ..
+        } = match parse_arguments_(args, false) {
+            CompilerArguments::Ok(args) => args,
+            o => panic!("Got unexpected parse result: {:?}", o),
+        };
+        assert_eq!(Some("foo/bar.c"), input.to_str());
+        assert_eq!(Language::C, language);
+        assert_map_contains!(outputs, ("obj", PathBuf::from("foo/bar.o")));
+        assert_eq!(
+            ovec!["-MMD", "-MT", "foo/bar.o", "-MF", "foo/bar.d"],
+            dependency_args
+        );
+        assert_eq!(ovec!["-fabc"], common_args);
+        assert!(!msvc_show_includes);
+    }
+
+    #[test]
     fn test_parse_arguments_empty_args() {
         assert_eq!(
             CompilerArguments::NotCompilation,
@@ -1314,6 +1378,7 @@ mod test {
             msvc_show_includes: false,
             profile_generate: false,
             color_mode: ColorMode::Auto,
+            suppress_rewrite_includes_only: false,
         };
         let compiler = &f.bins[0];
         // Compiler invocation.
