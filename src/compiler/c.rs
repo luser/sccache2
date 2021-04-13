@@ -643,6 +643,7 @@ pub const CACHE_VERSION: &[u8] = b"10";
 lazy_static! {
     /// Environment variables that are factored into the cache key.
     static ref CACHED_ENV_VARS: HashSet<&'static OsStr> = [
+        "SCCACHE_C_CUSTOM_CACHE_BUSTER",
         "MACOSX_DEPLOYMENT_TARGET",
         "IPHONEOS_DEPLOYMENT_TARGET",
     ].iter().map(OsStr::new).collect();
