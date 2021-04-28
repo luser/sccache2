@@ -645,6 +645,10 @@ lazy_static! {
     static ref CACHED_ENV_VARS: HashSet<&'static OsStr> = [
         "MACOSX_DEPLOYMENT_TARGET",
         "IPHONEOS_DEPLOYMENT_TARGET",
+        "TVOS_DEPLOYMENT_TARGET",
+        "WATCHOS_DEPLOYMENT_TARGET",
+        "SDKROOT",
+        "CCC_OVERRIDE_OPTIONS",
     ].iter().map(OsStr::new).collect();
 }
 
