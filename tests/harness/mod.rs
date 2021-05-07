@@ -297,7 +297,7 @@ impl DistSystem {
             || {
                 let status = self.scheduler_status();
                 if matches!(
-                    self.scheduler_status(),
+                    status,
                     SchedulerStatusResult {
                         num_servers: 0,
                         num_cpus: _,
@@ -437,7 +437,7 @@ impl DistSystem {
             || {
                 let status = self.scheduler_status();
                 if matches!(
-                    self.scheduler_status(),
+                    status,
                     SchedulerStatusResult {
                         num_servers: 1,
                         num_cpus: _,
@@ -461,7 +461,7 @@ impl DistSystem {
     }
 
     fn scheduler_status(&self) -> SchedulerStatusResult {
-        let res = reqwest::get(dist::http::urls::scheduler_status(
+        let res = reqwest::blocking::get(dist::http::urls::scheduler_status(
             &self.scheduler_url().to_url(),
         ))
         .unwrap();
@@ -646,8 +646,9 @@ fn wait_for_http(url: HTTPUrl, interval: Duration, max_wait: Duration) {
     // TODO: after upgrading to reqwest >= 0.9, use 'danger_accept_invalid_certs' and stick with that rather than tcp
     wait_for(
         || {
-            //match reqwest::get(url.to_url()) {
-            match net::TcpStream::connect(url.to_url()) {
+            let url = url.to_url();
+            let url = url.socket_addrs(|| None).unwrap();
+            match net::TcpStream::connect(url.as_slice()) {
                 Ok(_) => Ok(()),
                 Err(e) => Err(e.to_string()),
             }
