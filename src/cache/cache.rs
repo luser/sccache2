@@ -16,7 +16,7 @@
 use crate::cache::azure::AzureBlobCache;
 use crate::cache::disk::DiskCache;
 #[cfg(feature = "gcs")]
-use crate::cache::gcs::{self, GCSCache, GCSCredentialProvider, RWMode, ServiceAccountInfo};
+use crate::cache::gcs::{self, GCSCache, GCSCredentialProvider, RWMode, ServiceAccountInfo, URLType};
 #[cfg(feature = "memcached")]
 use crate::cache::memcached::MemcachedCache;
 #[cfg(feature = "redis")]
@@ -305,6 +305,7 @@ pub fn storage_from_config(config: &Config, pool: &ThreadPool) -> Arc<dyn Storag
                 ref bucket,
                 ref cred_path,
                 ref url,
+                ref url_type,
                 rw_mode,
             }) => {
                 debug!(
@@ -337,7 +338,17 @@ pub fn storage_from_config(config: &Config, pool: &ThreadPool) -> Arc<dyn Storag
                                 .ok()
                                 .map(ServiceAccountInfo::AccountKey)
                         } else if let Some(ref url) = *url {
-                            Some(ServiceAccountInfo::URL(url.clone()))
+                            let url_type = url_type.as_ref().and_then(|s| {
+                                match s.parse() {
+                                    Ok(x) => Some(x),
+                                    Err(e) => {
+                                        warn!("Error parsing URLType: {}", e);
+                                        warn!("Defaulting to \"tcauth\"");
+                                        None
+                                    }
+                                }
+                            }).unwrap_or(URLType::TaskClusterAuth);
+                            Some(ServiceAccountInfo::URL(url.clone(), url_type))
                         } else {
                             warn!(
                             "No SCCACHE_GCS_KEY_PATH specified-- no authentication will be used."
